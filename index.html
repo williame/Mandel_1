@@ -1,11 +1,124 @@
 <html>
 	<head>
 		<title>Will's quick mandelbulb GLSL</title>
+		<script id="vs_perf" type="x-shader/x-vertex">
+			uniform mat4 mvp;
+			attribute vec2 vertex;
+			void main() {
+				gl_Position = mvp * vec4(vertex,0.5,1);
+			}
+		</script>
+		<script id="fs_perf" type="x-shader/x-fragment">
+			precision mediump float;
+			uniform vec4 colour;
+			void main() {
+				gl_FragColor = colour;
+			}
+		</script>
+		<script id="vs_mandelbulb_1" type="x-shader/x-vertex">
+			uniform mat4 inv_mvp;
+			attribute vec2 vertex;
+			varying vec2 pos;
+			varying vec3 near, far;
+			void main() {
+				gl_Position = vec4(vertex,0,1);
+				pos = vertex;
+				vec4 p = inv_mvp * vec4(pos,-1,1);
+				near = p.xyz / p.w;
+				p = inv_mvp * vec4(pos,1,1);
+				far = (p.xyz / p.w);
+			}
+		</script>
+		<script id="fs_mandelbulb_1" type="x-shader/x-vertex">
+			precision mediump float;
+			varying vec2 pos;
+			varying vec3 near, far;
+			const float Power = 8.0;
+			const float BailOut = 7.0;
+			const int Iterations = 5;
+			float DE(vec3 pos) {
+				vec3 z = pos;
+				float dr = 1.0;
+				float r = 0.0;
+				for(int i = 0; i < Iterations; i++) {
+					r = length(z);
+					if (r>BailOut) break;
+					// convert to polar coordinates
+					float theta = acos(z.z/r);
+					float phi = atan(z.y,z.x);
+					float r7 = r*r*r*r*r*r*r, r8 = r7*r;
+					dr =  r7*Power*dr + 1.0;
+					// scale and rotate the point
+					float zr = r8;
+					theta = theta*Power;
+					phi = phi*Power;
+					// convert back to cartesian coordinates
+					z = zr*vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta));
+					z+=pos;
+				}
+				return 0.5*log(r)*r/dr;
+			}
+			const int MaxRaySteps = 100;
+			const float MinimumDistance = 0.000001;
+			void main() {
+				vec3 rayDir = far-near;
+				float rayLen = length(rayDir), totalDistance = 0.0, distance;
+				rayDir = normalize(rayDir);
+				int steps = 0;
+				for(int i=0; i<MaxRaySteps; i++) {
+					distance = DE(near + totalDistance * rayDir);
+					totalDistance += distance;
+					if(distance < MinimumDistance) break;
+					if(totalDistance > rayLen) discard;
+					steps++;
+				}
+				// super simple colouring based on number of steps
+				//distance = 1.0-float(steps)/float(MaxRaySteps);
+				distance = 1.0 - totalDistance/rayLen;
+				gl_FragColor = vec4(distance,distance,distance,1.0);
+			}
+		</script>
 		<script type="application/javascript">
-		
+
 var canvas, gl, program;
 
+var perf = {
+	data: new Float32Array(2*6*60*3),
+	slot: 0,
+	now: function() { return Date.now()/1000.0; },
+	init: function() {
+		this.start = this.now();
+		this.program = createProgram(
+			document.getElementById("vs_perf").textContent,
+			document.getElementById("fs_perf").textContent);
+		this.program.mvp = gl.getUniformLocation(this.program,"mvp");
+		this.program.colour = gl.getUniformLocation(this.program,"colour");
+		this.program.vertex = gl.getAttribLocation(this.program,"vertex");
+		this.program.vertexBuf = gl.createBuffer();
+	},
+	draw: function() {
+		// tick
+		var t = this.now() - this.start, w = 1.0/60;
+		var pts = [t,1,t+w,1,t,0,t+w,1,t,0,t+w,0]; // 2 triangles
+		this.data.set(pts,this.slot);
+		this.slot += pts.length;
+		if(this.slot >= this.data.length) this.slot = 0;
+		// draw
+		gl.useProgram(this.program);
+		var mvp = createOrtho2D(t+w-canvas.width/120.0,t+w,-5,1);
+		gl.uniformMatrix4fv(this.program.mvp,false,new Float32Array(mvp));
+		gl.uniform4f(this.program.colour,0.5,0.2,0.2,1.0);
+		gl.bindBuffer(gl.ARRAY_BUFFER,this.program.vertexBuf);
+		gl.bufferData(gl.ARRAY_BUFFER,this.data,gl.DYNAMIC_DRAW);
+		gl.enableVertexAttribArray(this.program.vertex);
+		gl.vertexAttribPointer(this.program.vertex,2,gl.FLOAT,false,0,0);
+		gl.drawArrays(gl.TRIANGLES,0,this.data.length/2);
+		gl.disableVertexAttribArray(this.program.vertex);
+	},
+};
+
 function start() {
+	
 	window.onerror = function(msg, url, lineno) {
 		alert(url + '(' + lineno + '): ' + msg);
 	};
@@ -18,77 +131,16 @@ function start() {
 		return;
 	}
 	gl.clearColor(0,0,0,1);
-	var vs =
-		'uniform mat4 inv_mvp;\n' +
-		'attribute vec2 vertex;\n' +
-		'varying vec2 pos;\n' +
-		'varying vec3 ray, rayDir;\n' +
-		'varying float rayLen;\n' +
-		'void main() {\n'+
-		'	gl_Position = vec4(vertex,0,1);\n' +
-		'	pos = vertex;\n' +
-		'	vec4 p = inv_mvp * vec4(pos,0,1);\n' +
-		'	ray = p.xyz / p.w;\n' +
-		'	p = inv_mvp * vec4(pos,1,1);\n' +
-		'	rayDir = (p.xyz / p.w) - ray;\n' +
-		'	rayLen = length(rayDir);\n' +
-		'	rayDir /= rayLen;\n' +
-		'}\n';
-	var fs =
-		'precision mediump float;\n' +
-		'varying vec2 pos;\n' +
-		'varying vec3 ray, rayDir;\n' +
-		'varying float rayLen;\n'+
-		'const float Power = 8.0;\n' +
-		'const float BailOut = 7.0;\n' +
-		'const int Iterations = 5;\n' +
-		'float DE(vec3 pos) {\n' +
-		'	vec3 z = pos;\n' +
-		'	float dr = 1.0;\n' +
-		'	float r = 0.0;\n' +
-		'	for(int i = 0; i < Iterations; i++) {\n' +
-		'		r = length(z);\n' +
-		'		if (r>BailOut) break;\n' +
-		'		// convert to polar coordinates\n' +
-		'		float theta = acos(z.z/r);\n' +
-		'		float phi = atan(z.y,z.x);\n' +
-		'		dr =  pow(r,Power-1.0)*Power*dr + 1.0;\n' +
-		'		// scale and rotate the point\n' +
-		'		float zr = pow(r,Power);\n' +
-		'		theta = theta*Power;\n' +
-		'		phi = phi*Power;\n' +
-		'		// convert back to cartesian coordinates\n' +
-		'		z = zr*vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta));\n' +
-		'		z+=pos;\n' +
-		'	}\n' +
-		'	return 0.5*log(r)*r/dr;\n' +
-		'}\n' +
-		'const int MaxRaySteps = 100;\n' +
-		'const float MinimumDistance = 0.000001;\n' +
-		'void main() {\n' +
-		'	float totalDistance = 0.0, distance;\n' +
-		'	int steps = 0;\n' +
-		'	for(int i=0; i<MaxRaySteps; i++) {\n' +
-		'		distance = DE(ray + totalDistance * rayDir);\n' +
-		'		totalDistance += distance;\n' +
-		'		if(distance < MinimumDistance) break;\n' +
-		'		if(totalDistance > rayLen) discard;\n' +
-		'		steps++;\n' +
-		'	}\n' +
-		'	// super simple colouring based on number of steps\n' +
-		'	//distance = 1.0-float(steps)/float(MaxRaySteps);\n' +
-		'	distance = 1.0 - totalDistance/rayLen;\n' +
-		'	gl_FragColor = vec4(distance,distance,distance,1.0);\n' +
-		'}\n';
+	var vs = document.getElementById("vs_mandelbulb_1").textContent;
+	var fs = document.getElementById("fs_mandelbulb_1").textContent;
 	program = createProgram(vs,fs);
-	gl.useProgram(program);
-	var vertexPosBuffer = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER,vertexPosBuffer);
+	program.vertexBuf = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER,program.vertexBuf);
 	var vertices = [-1, -1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1]; // two triangles that fill the screen, promise
 	gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
-	program.vertexPosAttrib = gl.getAttribLocation(program,'vertex');
-	gl.enableVertexAttribArray(program.vertexPosAttrib);
-	gl.vertexAttribPointer(program.vertexPosAttrib,2,gl.FLOAT,false,0,0);
+	program.vertex = gl.getAttribLocation(program,'vertex');
+	program.inv_mvp = gl.getUniformLocation(program,"inv_mvp");
+	perf.init();
 	render();
 }
 
@@ -97,14 +149,20 @@ var start_time = (new Date()).getTime();
 function render() {
 	var elapsed = (((new Date()).getTime() - start_time) / 1000) / 2;
 	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.useProgram(program);
 	// we swing and spin a bit
 	var distance = 2,
 		modelview = createLookAt([Math.cos(elapsed)*Math.sin(elapsed)*distance,Math.sin(elapsed)*distance,Math.cos(elapsed)*1.1],[0,0,0],[0,0,1]),
 		perspective = createPerspective(60.0,canvas.width/canvas.height,0.1,distance+2),
 		inv_mvp = mat4_inverse(mat4_multiply(perspective,modelview));
-        gl.uniformMatrix4fv(gl.getUniformLocation(program,"inv_mvp"),false,new Float32Array(inv_mvp));
-        gl.drawArrays(gl.TRIANGLES,0,6);
-        window.requestAnimFrame(render);
+	gl.uniformMatrix4fv(program.inv_mvp,false,new Float32Array(inv_mvp));
+	gl.bindBuffer(gl.ARRAY_BUFFER,program.vertexBuf);
+	gl.enableVertexAttribArray(program.vertex);
+	gl.vertexAttribPointer(program.vertex,2,gl.FLOAT,false,0,0);
+	gl.drawArrays(gl.TRIANGLES,0,6);
+	gl.disableVertexAttribArray(program.vertex);
+	perf.draw();
+	window.requestAnimFrame(render);
 }
 
 function createShader(str,type) {
@@ -147,35 +205,31 @@ function createLookAt(eye,centre,up) {
         x1 = up[2]*z0 - up[0]*z2;
         x2 = up[0]*z1 - up[1]*z0;
         len = Math.sqrt(x0*x0 + x1*x1 + x2*x2);
-        if (!len) {
-                x0 = 0;
-                x1 = 0;
-                x2 = 0;
-        } else {
-                len = 1/len;
-                x0 *= len;
-                x1 *= len;
-                x2 *= len;
-        };
+        if(len) len = 1/len; else len = 0;
+	x0 *= len;
+	x1 *= len;
+	x2 *= len;
         //vec3.normalize(vec3.cross(z, x, y));
         y0 = z1*x2 - z2*x1;
         y1 = z2*x0 - z0*x2;
         y2 = z0*x1 - z1*x0;
         len = Math.sqrt(y0*y0 + y1*y1 + y2*y2);
-        if (!len) {
-                y0 = 0;
-                y1 = 0;
-                y2 = 0;
-        } else {
-                len = 1/len;
-                y0 *= len;
-                y1 *= len;
-                y2 *= len;
-        }
+        if(len) len = 1/len; else len = 0;
+	y0 *= len;
+	y1 *= len;
+	y2 *= len;
         return [x0, y0, z0, 0,
         	x1, y1, z1, 0,
         	x2, y2, z2, 0,
         	-(x0*eye[0] + x1*eye[1] + x2*eye[2]), -(y0*eye[0] + y1*eye[1] + y2*eye[2]), -(z0*eye[0] + z1*eye[1] + z2*eye[2]), 1];
+}
+
+function createOrtho2D(left,right,top,bottom) {
+	var near = -1, far = 1;
+	return [2.0/(right-left),0,0,0,
+		0,2.0/(top-bottom),0,0,
+		0,0,-2.0/(far-near),0,
+		-((right+left)/(right-left)), -((top+bottom)/(top-bottom)), -((far+near)/(far-near)),1];
 }
 
 function createPerspective(fovy,aspect,near,far) {
@@ -191,30 +245,22 @@ function createPerspective(fovy,aspect,near,far) {
 }
 
 function mat4_multiply(a,b) {
-        var a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
-        var a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
-        var a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
-        var a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
-        var b00 = b[0], b01 = b[1], b02 = b[2], b03 = b[3];
-        var b10 = b[4], b11 = b[5], b12 = b[6], b13 = b[7];
-        var b20 = b[8], b21 = b[9], b22 = b[10], b23 = b[11];
-        var b30 = b[12], b31 = b[13], b32 = b[14], b33 = b[15];        
-        return [b00*a00 + b01*a10 + b02*a20 + b03*a30,
-		b00*a01 + b01*a11 + b02*a21 + b03*a31,
-		b00*a02 + b01*a12 + b02*a22 + b03*a32,
-		b00*a03 + b01*a13 + b02*a23 + b03*a33,
-		b10*a00 + b11*a10 + b12*a20 + b13*a30,
-		b10*a01 + b11*a11 + b12*a21 + b13*a31,
-		b10*a02 + b11*a12 + b12*a22 + b13*a32,
-		b10*a03 + b11*a13 + b12*a23 + b13*a33,
-		b20*a00 + b21*a10 + b22*a20 + b23*a30,
-		b20*a01 + b21*a11 + b22*a21 + b23*a31,
-		b20*a02 + b21*a12 + b22*a22 + b23*a32,
-		b20*a03 + b21*a13 + b22*a23 + b23*a33,
-		b30*a00 + b31*a10 + b32*a20 + b33*a30,
-		b30*a01 + b31*a11 + b32*a21 + b33*a31,
-		b30*a02 + b31*a12 + b32*a22 + b33*a32,
-		b30*a03 + b31*a13 + b32*a23 + b33*a33];
+        return [b[0]*a[0] + b[1]*a[4] + b[2]*a[8] + b[3]*a[12],
+		b[0]*a[1] + b[1]*a[5] + b[2]*a[9] + b[3]*a[13],
+		b[0]*a[2] + b[1]*a[6] + b[2]*a[10] + b[3]*a[14],
+		b[0]*a[3] + b[1]*a[7] + b[2]*a[11] + b[3]*a[15],
+		b[4]*a[0] + b[5]*a[4] + b[6]*a[8] + b[7]*a[12],
+		b[4]*a[1] + b[5]*a[5] + b[6]*a[9] + b[7]*a[13],
+		b[4]*a[2] + b[5]*a[6] + b[6]*a[10] + b[7]*a[14],
+		b[4]*a[3] + b[5]*a[7] + b[6]*a[11] + b[7]*a[15],
+		b[8]*a[0] + b[9]*a[4] + b[10]*a[8] + b[11]*a[12],
+		b[8]*a[1] + b[9]*a[5] + b[10]*a[9] + b[11]*a[13],
+		b[8]*a[2] + b[9]*a[6] + b[10]*a[10] + b[11]*a[14],
+		b[8]*a[3] + b[9]*a[7] + b[10]*a[11] + b[11]*a[15],
+		b[12]*a[0] + b[13]*a[4] + b[14]*a[8] + b[15]*a[12],
+		b[12]*a[1] + b[13]*a[5] + b[14]*a[9] + b[15]*a[13],
+		b[12]*a[2] + b[13]*a[6] + b[14]*a[10] + b[15]*a[14],
+		b[12]*a[3] + b[13]*a[7] + b[14]*a[11] + b[15]*a[15]];
 }
 
 function mat4_inverse(mat) {
@@ -252,7 +298,15 @@ function mat4_inverse(mat) {
 		(a00*b09 - a01*b07 + a02*b06)*invDet,
 		(-a30*b03 + a31*b01 - a32*b00)*invDet,
 		(a20*b03 - a21*b01 + a22*b00)*invDet];
-}   
+}
+
+function mat4_transpose(f) {
+	return [
+		f[0], f[4], f[8], f[12],
+		f[1], f[5], f[9], f[13],
+		f[2], f[6], f[10], f[14],
+		f[3], f[7], f[11], f[15]];
+}
 
 window.requestAnimFrame = (function(callback) {
         return window.requestAnimationFrame ||
