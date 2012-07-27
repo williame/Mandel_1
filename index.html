@@ -130,6 +130,11 @@ function start() {
 		alert("Unable to initialize WebGL. Your browser may not support it.");
 		return;
 	}
+	window.onresize = function() {
+		// setting its OpenGL canvas size to the window size
+		canvas.width = window.innerWidth;
+		canvas.height = window.innerHeight;
+	};
 	gl.clearColor(0,0,0,1);
 	var vs = document.getElementById("vs_mandelbulb_1").textContent;
 	var fs = document.getElementById("fs_mandelbulb_1").textContent;
@@ -149,6 +154,7 @@ var start_time = (new Date()).getTime();
 function render() {
 	var elapsed = (((new Date()).getTime() - start_time) / 1000) / 2;
 	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.viewport(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight);
 	gl.useProgram(program);
 	// we swing and spin a bit
 	var distance = 2,
@@ -225,11 +231,11 @@ function createLookAt(eye,centre,up) {
 }
 
 function createOrtho2D(left,right,top,bottom) {
-	var near = -1, far = 1;
-	return [2.0/(right-left),0,0,0,
-		0,2.0/(top-bottom),0,0,
-		0,0,-2.0/(far-near),0,
-		-((right+left)/(right-left)), -((top+bottom)/(top-bottom)), -((far+near)/(far-near)),1];
+	var near = -1, far = 1, rl = right-left, tb = top-bottom, fn = far-near;
+	return [2/rl,0,0,0,
+		0,2/tb,0,0,
+		0,0,-2/fn,0,
+		-((right+left)/rl), -((top+bottom)/tb), -((far+near)/fn),1];
 }
 
 function createPerspective(fovy,aspect,near,far) {
@@ -308,20 +314,18 @@ function mat4_transpose(f) {
 		f[3], f[7], f[11], f[15]];
 }
 
-window.requestAnimFrame = (function(callback) {
-        return window.requestAnimationFrame ||
-        window.webkitRequestAnimationFrame ||
-        window.mozRequestAnimationFrame ||
-        window.oRequestAnimationFrame ||
-        window.msRequestAnimationFrame ||
-    function(callback) {
-        window.setTimeout(callback, 0);
-    };
-})();
+window.requestAnimFrame = window.requestAnimationFrame ||
+	window.webkitRequestAnimationFrame ||
+	window.mozRequestAnimationFrame ||
+	window.oRequestAnimationFrame ||
+	window.msRequestAnimationFrame ||
+	function(callback) {
+		window.setTimeout(callback, 0);
+	};
 		</script>
 	</head>
-	<body onload="start()">
-		<canvas id="game-canvas" style="width:100%;height:100%;">
+	<body onload="start()" style="border:0px;margin:0px;padding:0px;">
+		<canvas id="game-canvas" style="width:100%;height:100%;border:0px;margin:0px;padding:0px;">
 			Your browser does not support WebGL :(
 		</canvas>
 	</body>
