@@ -33,6 +33,7 @@
 		<script id="fs_mandelbulb_1" type="x-shader/x-vertex">
 			precision mediump float;
 			uniform sampler2D distance_tex;
+			uniform float epsilon;
 			varying vec2 pos;
 			varying vec3 near, far;
 			const float Power = 8.0;
@@ -61,7 +62,6 @@
 				return 0.5*log(r)*r/dr;
 			}
 			const int MaxRaySteps = $MaxRaySteps$;
-			const float MinimumDistance = 0.000001;
 			void main() {
 				vec3 rayDir = far-near;
 				float rayLen = length(rayDir),
@@ -79,7 +79,7 @@
 							totalDistance = rayLen;
 							break;
 						}
-						if(distance < MinimumDistance) break;
+						if(distance < epsilon) break;
 					}
 					distance = totalDistance/rayLen;
 				}
@@ -155,7 +155,7 @@ function start() {
 	},{
 			program: createProgram(vs,fs.replace("$MaxRaySteps$","10")),
 			framebuffer: gl.createFramebuffer(),
-			distance_tex: createFramebufferTexture(512,256),
+			distance_tex: createFramebufferTexture(256,256),
 	},{
 			program: createProgram(vs,fs.replace("$MaxRaySteps$","40")),
 			framebuffer: null,
@@ -168,11 +168,12 @@ function start() {
 		step.program.vertexBuf = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.vertexBuf);
 		gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
-		step.program.vertex = gl.getAttribLocation(step.program,'vertex');
+		step.program.vertex = gl.getAttribLocation(step.program,"vertex");
 		step.program.tex_coordBuf = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.tex_coordBuf);
 		gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(tex_coords),gl.STATIC_DRAW);
-		step.program.tex_coord = gl.getAttribLocation(step.program,'tex_coord');
+		step.program.tex_coord = gl.getAttribLocation(step.program,"tex_coord");
+		step.program.epsilon = gl.getUniformLocation(step.program,"epsilon");
 		step.program.inv_mvp = gl.getUniformLocation(step.program,"inv_mvp");
 		step.program.distance_tex = gl.getUniformLocation(step.program,"distance_tex");
 	}
@@ -200,6 +201,7 @@ function render() {
 		gl.viewport(0,0,target.width,target.height);
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, distance_tex);
+		gl.uniform1f(step.program.epsilon,(1.0/Math.min(canvas.width,canvas.height))/2.0);
 		gl.uniform1i(step.program.distance_tex,0);
 		gl.uniformMatrix4fv(step.program.inv_mvp,false,new Float32Array(inv_mvp));
 		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.vertexBuf);
