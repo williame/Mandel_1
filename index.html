@@ -18,23 +18,25 @@
 		<script id="vs_mandelbulb_1" type="x-shader/x-vertex">
 			uniform mat4 inv_mvp;
 			attribute vec2 vertex;
+			attribute vec2 tex_coord;
 			varying vec2 pos;
 			varying vec3 near, far;
 			void main() {
 				gl_Position = vec4(vertex,0,1);
-				pos = vertex;
-				vec4 p = inv_mvp * vec4(pos,-1,1);
+				pos = tex_coord;
+				vec4 p = inv_mvp * vec4(vertex,-1,1);
 				near = p.xyz / p.w;
-				p = inv_mvp * vec4(pos,1,1);
+				p = inv_mvp * vec4(vertex,1,1);
 				far = (p.xyz / p.w);
 			}
 		</script>
 		<script id="fs_mandelbulb_1" type="x-shader/x-vertex">
 			precision mediump float;
+			uniform sampler2D distance_tex;
 			varying vec2 pos;
 			varying vec3 near, far;
 			const float Power = 8.0;
-			const float BailOut = 7.0;
+			const float BailOut = 2.0;
 			const int Iterations = 5;
 			float DE(vec3 pos) {
 				vec3 z = pos;
@@ -58,35 +60,41 @@
 				}
 				return 0.5*log(r)*r/dr;
 			}
-			const int MaxRaySteps = 100;
+			const int MaxRaySteps = $MaxRaySteps$;
 			const float MinimumDistance = 0.000001;
 			void main() {
 				vec3 rayDir = far-near;
-				float rayLen = length(rayDir), totalDistance = 0.0, distance;
-				rayDir = normalize(rayDir);
-				int steps = 0;
-				for(int i=0; i<MaxRaySteps; i++) {
-					distance = DE(near + totalDistance * rayDir);
-					totalDistance += distance;
-					if(distance < MinimumDistance) break;
-					if(totalDistance > rayLen) discard;
-					steps++;
+				float rayLen = length(rayDir),
+					g = 1.0,
+					b = texture2D(distance_tex,pos).r,
+					totalDistance = b * rayLen,
+					distance = 1.0;
+				if(b != 1.0) {
+					g = 0.0;
+					rayDir /= rayLen;
+					for(int i=0; i<MaxRaySteps; i++) {
+						distance = DE(near + totalDistance * rayDir);
+						totalDistance += distance;
+						if(totalDistance > rayLen) {
+							totalDistance = rayLen;
+							break;
+						}
+						if(distance < MinimumDistance) break;
+					}
+					distance = totalDistance/rayLen;
 				}
-				// super simple colouring based on number of steps
-				//distance = 1.0-float(steps)/float(MaxRaySteps);
-				distance = 1.0 - totalDistance/rayLen;
-				gl_FragColor = vec4(distance,distance,distance,1.0);
+				gl_FragColor = vec4(distance,g,b,1.0);
 			}
 		</script>
 		<script type="application/javascript">
 
-var canvas, gl, program;
+var canvas, gl, steps;
 
 var perf = {
 	data: new Float32Array(2*6*60*3),
 	slot: 0,
 	now: function() { return Date.now()/1000.0; },
-	init: function() {
+	init: function(target) {
 		this.start = this.now();
 		this.program = createProgram(
 			document.getElementById("vs_perf").textContent,
@@ -118,7 +126,6 @@ var perf = {
 };
 
 function start() {
-	
 	window.onerror = function(msg, url, lineno) {
 		alert(url + '(' + lineno + '): ' + msg);
 	};
@@ -130,64 +137,129 @@ function start() {
 		alert("Unable to initialize WebGL. Your browser may not support it.");
 		return;
 	}
+	gl.activeTexture(gl.TEXTURE0);
+	gl.clearColor(0,0,0,1);
 	window.onresize = function() {
 		// setting its OpenGL canvas size to the window size
 		canvas.width = window.innerWidth;
 		canvas.height = window.innerHeight;
+		gl.clear(gl.COLOR_BUFFER_BIT);
 	};
-	gl.clearColor(0,0,0,1);
+	window.onresize();
 	var vs = document.getElementById("vs_mandelbulb_1").textContent;
 	var fs = document.getElementById("fs_mandelbulb_1").textContent;
-	program = createProgram(vs,fs);
-	program.vertexBuf = gl.createBuffer();
-	gl.bindBuffer(gl.ARRAY_BUFFER,program.vertexBuf);
-	var vertices = [-1, -1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1]; // two triangles that fill the screen, promise
-	gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
-	program.vertex = gl.getAttribLocation(program,'vertex');
-	program.inv_mvp = gl.getUniformLocation(program,"inv_mvp");
+	steps = [{
+			program: createProgram(vs,fs.replace("$MaxRaySteps$","10")),
+			framebuffer: gl.createFramebuffer(),
+			distance_tex: createFramebufferTexture(128,64),
+	},{
+			program: createProgram(vs,fs.replace("$MaxRaySteps$","10")),
+			framebuffer: gl.createFramebuffer(),
+			distance_tex: createFramebufferTexture(512,256),
+	},{
+			program: createProgram(vs,fs.replace("$MaxRaySteps$","40")),
+			framebuffer: null,
+			distance_tex: null,
+	}];
+	var vertices = [-1, -1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1], // two triangles that fill the screen, promise
+		tex_coords = [0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1]; // corresponding tex coordinates
+	for(var step in steps) {
+		step = steps[step];
+		step.program.vertexBuf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.vertexBuf);
+		gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
+		step.program.vertex = gl.getAttribLocation(step.program,'vertex');
+		step.program.tex_coordBuf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.tex_coordBuf);
+		gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(tex_coords),gl.STATIC_DRAW);
+		step.program.tex_coord = gl.getAttribLocation(step.program,'tex_coord');
+		step.program.inv_mvp = gl.getUniformLocation(step.program,"inv_mvp");
+		step.program.distance_tex = gl.getUniformLocation(step.program,"distance_tex");
+	}
 	perf.init();
-	render();
+	window.requestAnimFrame(render);
 }
 
 var start_time = (new Date()).getTime();
 
 function render() {
 	var elapsed = (((new Date()).getTime() - start_time) / 1000) / 2;
-	gl.clear(gl.COLOR_BUFFER_BIT);
-	gl.viewport(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight);
-	gl.useProgram(program);
 	// we swing and spin a bit
 	var distance = 2,
-		modelview = createLookAt([Math.cos(elapsed)*Math.sin(elapsed)*distance,Math.sin(elapsed)*distance,Math.cos(elapsed)*1.1],[0,0,0],[0,0,1]),
-		perspective = createPerspective(60.0,canvas.width/canvas.height,0.1,distance+2),
-		inv_mvp = mat4_inverse(mat4_multiply(perspective,modelview));
-	gl.uniformMatrix4fv(program.inv_mvp,false,new Float32Array(inv_mvp));
-	gl.bindBuffer(gl.ARRAY_BUFFER,program.vertexBuf);
-	gl.enableVertexAttribArray(program.vertex);
-	gl.vertexAttribPointer(program.vertex,2,gl.FLOAT,false,0,0);
-	gl.drawArrays(gl.TRIANGLES,0,6);
-	gl.disableVertexAttribArray(program.vertex);
+		modelview = createLookAt([Math.cos(elapsed)*Math.sin(elapsed)*distance,Math.sin(elapsed)*distance,Math.cos(elapsed)*1.1],[0,0,0],[0,0,1]);
+	var distance_tex = null;
+	for(var step in steps) {
+		step = steps[step];
+		gl.useProgram(step.program);
+		var target = step.distance_tex || canvas,
+			perspective = createPerspective(60.0,canvas.width/canvas.height,0.1,distance+2),
+			inv_mvp = mat4_inverse(mat4_multiply(perspective,modelview));
+		gl.bindFramebuffer(gl.FRAMEBUFFER,step.framebuffer);
+		if(step.distance_tex)
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, step.distance_tex, 0);
+		gl.viewport(0,0,target.width,target.height);
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, distance_tex);
+		gl.uniform1i(step.program.distance_tex,0);
+		gl.uniformMatrix4fv(step.program.inv_mvp,false,new Float32Array(inv_mvp));
+		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.vertexBuf);
+		gl.enableVertexAttribArray(step.program.vertex);
+		gl.vertexAttribPointer(step.program.vertex,2,gl.FLOAT,false,0,0);
+		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.tex_coordBuf);
+		gl.enableVertexAttribArray(step.program.tex_coord);
+		gl.vertexAttribPointer(step.program.tex_coord,2,gl.FLOAT,false,0,0);
+		gl.drawArrays(gl.TRIANGLES,0,6);
+		gl.disableVertexAttribArray(step.program.vertex);
+		gl.disableVertexAttribArray(step.program.tex_coord);
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
+		gl.bindTexture(gl.TEXTURE_2D, null);
+		distance_tex = step.distance_tex;
+	}
 	perf.draw();
 	window.requestAnimFrame(render);
 }
 
 function createShader(str,type) {
-	var shader = gl.createShader(type);
-	gl.shaderSource(shader,str);
-	gl.compileShader(shader);
-	if (!gl.getShaderParameter(shader,gl.COMPILE_STATUS))
-		throw gl.getShaderInfoLog(shader);
+	if(!window.x_shaders) window.x_shaders = [];
+	var shader = window.x_shaders[[str,type]];
+	if(!shader) {
+		shader = gl.createShader(type);
+		gl.shaderSource(shader,str);
+		gl.compileShader(shader);
+		if (!gl.getShaderParameter(shader,gl.COMPILE_STATUS))
+			throw gl.getShaderInfoLog(shader);
+		window.x_shaders[[str,type]] = shader;
+	}
 	return shader;
 }
 
 function createProgram(vstr,fstr) {
-	var program = gl.createProgram();
-	var vshader = createShader(vstr,gl.VERTEX_SHADER);
-	var fshader = createShader(fstr,gl.FRAGMENT_SHADER);
-	gl.attachShader(program,vshader);
-	gl.attachShader(program,fshader);
-	gl.linkProgram(program);
+	if(!window.x_programs) window.x_programs = [];
+	var program = window.x_programs[[vstr,fstr]];
+	if(!program) {
+		program = gl.createProgram();
+		var vshader = createShader(vstr,gl.VERTEX_SHADER);
+		var fshader = createShader(fstr,gl.FRAGMENT_SHADER);
+		gl.attachShader(program,vshader);
+		gl.attachShader(program,fshader);
+		gl.linkProgram(program);
+		window.x_programs[[vstr,fstr]] = program;
+	}
 	return program;
+}
+
+function createFramebufferTexture(width,height) {
+	var tex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, tex);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.bindTexture(gl.TEXTURE_2D, null);
+	tex.width = width;
+	tex.height = height;
+	return tex;
 }
 
 function createLookAt(eye,centre,up) {
