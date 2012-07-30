@@ -147,9 +147,9 @@ function start() {
 	gl.activeTexture(gl.TEXTURE0);
 	gl.clearColor(0,0,0,1);
 	window.onresize = function() {
-		// setting its OpenGL canvas size to the window size
-		canvas.width = canvas.offsetWidth;
-		canvas.height = canvas.offsetHeight;
+		// setting its OpenGL canvas size to largest power-of-2 smaller than the canvas screen space
+		for(canvas.width = 2; canvas.width*2 <= canvas.offsetWidth; canvas.width *= 2);
+		for(canvas.height = 2; canvas.height*2 <= canvas.offsetHeight; canvas.height *= 2);
 		gl.clear(gl.COLOR_BUFFER_BIT);
 		best_fps = 0; // reset it
 		config = [];
@@ -240,15 +240,20 @@ function render() {
 		elapsed = (T / 1000) / 2;
 	if(T > last_build_steps + 5000) {
 		var fps = perf.fps(3);
-		if(fps > best_fps) {
-			var info = ""+fps+" fps at "+canvas.width+"x"+canvas.height+" using [";
-			for(var cfg in config) {
-				cfg = config[cfg];
-				info += "{"+cfg.MaxRaySteps+","+cfg.Distance_W+"x"+cfg.Distance_H+"}";
+		if(fps >= best_fps-1.0) {
+			var info = "" + fps + " fps at "+canvas.width+"x"+canvas.height+" ";
+			if(!config.length) {
+				info += "single-pass rendering at "+canvas.width+"x"+canvas.height+", 50\n";
+			} else {
+				info += " using " + config.length + " passes [";
+				for(var cfg in config) {
+					cfg = config[cfg];
+					info += "{"+cfg.MaxRaySteps+","+cfg.Distance_W+"x"+cfg.Distance_H+"}";
+				}
+				info += "],50\n";
 			}
-			info += "],50\n";
 			log_info(info);
-			best_fps = fps;
+			best_fps = Math.max(fps,best_fps);
 		}
 		random_steps();
 	}
@@ -256,8 +261,13 @@ function render() {
 	var distance = 2,
 		modelview = createLookAt([Math.cos(elapsed)*Math.sin(elapsed)*distance,Math.sin(elapsed)*distance,Math.cos(elapsed)*1.1],[0,0,0],[0,0,1]);
 	var distance_tex = null;
-	for(var step in steps) {
-		step = steps[step];
+	var step_num = 0, config_copy = config;
+	render_step = function() {
+		if(config_copy != config) { // oops, changed mid-render
+			window.requestAnimFrame(render);
+			return;
+		}
+		step = steps[step_num++];
 		gl.useProgram(step.program);
 		var target = step.distance_tex || canvas,
 			perspective = createPerspective(60.0,canvas.width/canvas.height,0.1,distance+2),
@@ -289,9 +299,15 @@ function render() {
 			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
 		gl.bindTexture(gl.TEXTURE_2D, null);
 		distance_tex = step.distance_tex;
-	}
-	perf.draw();
-	window.requestAnimFrame(render);
+		if(step_num == steps.length) {
+			perf.draw();
+			window.requestAnimFrame(render);
+		} else if(navigator.userAgent.toLowerCase().indexOf('chrome') >= 0)
+			setTimeout(render_step,1); // can't seem to stop repaint bugs in Chrome :(
+		else
+			render_step();
+	};
+	render_step();
 }
 
 function createShader(str,type) {
