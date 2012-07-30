@@ -27,13 +27,13 @@
 				vec4 p = inv_mvp * vec4(vertex,-1,1);
 				near = p.xyz / p.w;
 				p = inv_mvp * vec4(vertex,1,1);
-				far = (p.xyz / p.w);
+				far = p.xyz / p.w;
 			}
 		</script>
 		<script id="fs_mandelbulb_1" type="x-shader/x-vertex">
 			precision mediump float;
 			uniform sampler2D distance_tex;
-			uniform float epsilon;
+			uniform float epsilon, epsilon_dir;
 			varying vec2 pos;
 			varying vec3 near, far;
 			const float Power = 8.0;
@@ -65,30 +65,29 @@
 			void main() {
 				vec3 rayDir = far-near;
 				float rayLen = length(rayDir),
-					g = 1.0,
-					b = texture2D(distance_tex,pos).r,
-					totalDistance = b * rayLen,
-					distance = 1.0;
-				if(b != 1.0) {
-					g = 0.0;
+					distance = texture2D(distance_tex,pos).r,
+					totalDistance = distance * rayLen;
+				if(distance < 1.0) {
 					rayDir /= rayLen;
+					float epsilonDir = epsilon_dir / rayLen;
 					for(int i=0; i<MaxRaySteps; i++) {
 						distance = DE(near + totalDistance * rayDir);
 						totalDistance += distance;
-						if(totalDistance > rayLen) {
+						if(totalDistance >= rayLen) {
 							totalDistance = rayLen;
 							break;
 						}
-						if(distance < epsilon) break;
+						if(distance <= (epsilon + (epsilonDir * totalDistance)))
+							break;
 					}
 					distance = totalDistance/rayLen;
 				}
-				gl_FragColor = vec4(distance,g,b,1.0);
+				gl_FragColor = vec4(distance,distance*0.5,distance,1.0);
 			}
 		</script>
 		<script type="application/javascript">
 
-var canvas, gl, steps;
+var canvas, gl;
 
 var perf = {
 	data: new Float32Array(2*6*60*3),
@@ -123,6 +122,14 @@ var perf = {
 		gl.drawArrays(gl.TRIANGLES,0,this.data.length/2);
 		gl.disableVertexAttribArray(this.program.vertex);
 	},
+	fps: function(secs) {
+		var count = 0, since = this.now() - this.start - secs;
+		for(var tick=0; tick<this.data.length; tick+=6) {
+			var t = this.data[tick];
+			if(t && t > since) count++;
+		}
+		return count / secs;
+	},
 };
 
 function start() {
@@ -141,26 +148,45 @@ function start() {
 	gl.clearColor(0,0,0,1);
 	window.onresize = function() {
 		// setting its OpenGL canvas size to the window size
-		canvas.width = window.innerWidth;
-		canvas.height = window.innerHeight;
+		canvas.width = canvas.offsetWidth;
+		canvas.height = canvas.offsetHeight;
 		gl.clear(gl.COLOR_BUFFER_BIT);
+		best_fps = 0; // reset it
+		config = [];
+		build_steps(50);
 	};
 	window.onresize();
+	perf.init();
+	window.requestAnimFrame(render);
+}
+
+function now() { return (new Date()).getTime(); }
+
+var config = [], steps = [], start_time = now(), last_build_steps, best_fps = 0;
+
+function build_steps(FinalMaxRaySteps) {
+	last_build_steps = now() - start_time;
+	for(var step in steps) {
+		step = steps[step];
+		if(step.framebuffer) gl.deleteFramebuffer(step.framebuffer);
+		if(step.distance_tex) gl.deleteTexture(step.distance_tex);
+	}
+	steps = [];
 	var vs = document.getElementById("vs_mandelbulb_1").textContent;
 	var fs = document.getElementById("fs_mandelbulb_1").textContent;
-	steps = [{
-			program: createProgram(vs,fs.replace("$MaxRaySteps$","10")),
+	for(var cfg in config) {
+		cfg = config[cfg];
+		steps.push({
+			program: createProgram(vs,fs.replace("$MaxRaySteps$",cfg.MaxRaySteps)),
 			framebuffer: gl.createFramebuffer(),
-			distance_tex: createFramebufferTexture(128,64),
-	},{
-			program: createProgram(vs,fs.replace("$MaxRaySteps$","10")),
-			framebuffer: gl.createFramebuffer(),
-			distance_tex: createFramebufferTexture(256,256),
-	},{
-			program: createProgram(vs,fs.replace("$MaxRaySteps$","40")),
-			framebuffer: null,
-			distance_tex: null,
-	}];
+			distance_tex: createFramebufferTexture(cfg.Distance_W,cfg.Distance_H),
+		});
+	}
+	steps.push({
+		program: createProgram(vs,fs.replace("$MaxRaySteps$",FinalMaxRaySteps)),
+		framebuffer: null,
+		distance_tex: null,
+	});
 	var vertices = [-1, -1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1], // two triangles that fill the screen, promise
 		tex_coords = [0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1]; // corresponding tex coordinates
 	for(var step in steps) {
@@ -174,17 +200,50 @@ function start() {
 		gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(tex_coords),gl.STATIC_DRAW);
 		step.program.tex_coord = gl.getAttribLocation(step.program,"tex_coord");
 		step.program.epsilon = gl.getUniformLocation(step.program,"epsilon");
+		step.program.epsilon_dir = gl.getUniformLocation(step.program,"epsilon_dir");
 		step.program.inv_mvp = gl.getUniformLocation(step.program,"inv_mvp");
 		step.program.distance_tex = gl.getUniformLocation(step.program,"distance_tex");
 	}
-	perf.init();
-	window.requestAnimFrame(render);
 }
 
-var start_time = (new Date()).getTime();
+function random_steps() {
+	var 	W = [32,64,128,256,512],
+		H = [32,64,128,256,512];
+	config = [];
+	while(W.length && H.length) {
+		if(Math.random() > 0.8) {
+			W.shift();
+			H.shift();
+		} else if(Math.random() > 0.7)
+			W.shift();
+		else if(Math.random() > 0.7)
+			H.shift();
+		else
+			config.push({
+				MaxRaySteps:Math.floor(5+Math.random()*30),
+				Distance_W: W.shift(),
+				Distance_H: H.shift(),
+			});
+	}
+	build_steps(50);
+}
 
 function render() {
-	var elapsed = (((new Date()).getTime() - start_time) / 1000) / 2;
+	var T = now() - start_time,
+		elapsed = (T / 1000) / 2;
+	if(T > last_build_steps + 5000) {
+		var fps = perf.fps(3);
+		if(fps > best_fps) {
+			var info = ""+fps+" fps at "+canvas.width+"x"+canvas.height+" using [";
+			for(var cfg in config) {
+				cfg = config[cfg];
+				info += "{"+cfg.MaxRaySteps+","+cfg.Distance_W+"x"+cfg.Distance_H+"}";
+			}
+			document.getElementById("infowin").textContent += info + "],50\n";
+			best_fps = fps;
+		}
+		random_steps();
+	}
 	// we swing and spin a bit
 	var distance = 2,
 		modelview = createLookAt([Math.cos(elapsed)*Math.sin(elapsed)*distance,Math.sin(elapsed)*distance,Math.cos(elapsed)*1.1],[0,0,0],[0,0,1]);
@@ -200,8 +259,13 @@ function render() {
 			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, step.distance_tex, 0);
 		gl.viewport(0,0,target.width,target.height);
 		gl.activeTexture(gl.TEXTURE0);
-		gl.bindTexture(gl.TEXTURE_2D, distance_tex);
-		gl.uniform1f(step.program.epsilon,(1.0/Math.min(canvas.width,canvas.height))/2.0);
+		gl.bindTexture(gl.TEXTURE_2D,distance_tex);
+		var epsilon = (1.0/Math.min(target.width-1,target.height-1))/2.0,
+			btl = mat4_vec3_multiply(inv_mvp,[-1,-1,1]),
+			bbr = mat4_vec3_multiply(inv_mvp,[1,1,1]),
+			epsilon_dir = ((1.0/Math.min(target.width/Math.abs(btl[0]-bbr[0]),target.height/Math.abs(btl[1]-bbr[1])))/2.0) - epsilon;
+		gl.uniform1f(step.program.epsilon,epsilon);
+		gl.uniform1f(step.program.epsilon_dir,epsilon_dir);
 		gl.uniform1i(step.program.distance_tex,0);
 		gl.uniformMatrix4fv(step.program.inv_mvp,false,new Float32Array(inv_mvp));
 		gl.bindBuffer(gl.ARRAY_BUFFER,step.program.vertexBuf);
@@ -213,7 +277,8 @@ function render() {
 		gl.drawArrays(gl.TRIANGLES,0,6);
 		gl.disableVertexAttribArray(step.program.vertex);
 		gl.disableVertexAttribArray(step.program.tex_coord);
-		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
+		if(step.distance_tex)
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
 		gl.bindTexture(gl.TEXTURE_2D, null);
 		distance_tex = step.distance_tex;
 	}
@@ -343,6 +408,12 @@ function mat4_multiply(a,b) {
 		b[12]*a[3] + b[13]*a[7] + b[14]*a[11] + b[15]*a[15]];
 }
 
+function mat4_vec3_multiply(m,v) {
+	return [v[0] * m[0] + v[1] * m[4] + v[2] * m[8] + m[12],
+		v[0] * m[1] + v[1] * m[5] + v[2] * m[9] + m[13],
+		v[0] * m[2] + v[1] * m[6] + v[2] * m[10] + m[14]];
+}
+
 function mat4_inverse(mat) {
         var a00 = mat[0], a01 = mat[1], a02 = mat[2], a03 = mat[3];
         var a10 = mat[4], a11 = mat[5], a12 = mat[6], a13 = mat[7];
@@ -399,8 +470,11 @@ window.requestAnimFrame = window.requestAnimationFrame ||
 		</script>
 	</head>
 	<body onload="start()" style="border:0px;margin:0px;padding:0px;">
-		<canvas id="game-canvas" style="width:100%;height:100%;border:0px;margin:0px;padding:0px;">
-			Your browser does not support WebGL :(
-		</canvas>
+		<div style="float:left;width:75%;">
+			<canvas id="game-canvas" style="width:100%;height:100%;border:0px;margin:0px;padding:0px;cursor:none;">
+				Your browser does not support WebGL :(
+			</canvas>
+		</div>
+		<div style="font-family:sans-serif;float:right; width:25%;overflow:auto;"><pre id="infowin"></pre></div>
 	</body>
 </html>
