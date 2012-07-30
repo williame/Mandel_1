@@ -228,6 +228,13 @@ function random_steps() {
 	build_steps(50);
 }
 
+function log_info(msg) {
+	var win = document.getElementById("infowin");
+	win.innerHTML += msg.replace("\n","<br/>");
+	win.style.visibility="hidden"; // force repaint, needed for Chrome :(
+	win.style.visibility="visible";
+}
+
 function render() {
 	var T = now() - start_time,
 		elapsed = (T / 1000) / 2;
@@ -239,7 +246,8 @@ function render() {
 				cfg = config[cfg];
 				info += "{"+cfg.MaxRaySteps+","+cfg.Distance_W+"x"+cfg.Distance_H+"}";
 			}
-			document.getElementById("infowin").textContent += info + "],50\n";
+			info += "],50\n";
+			log_info(info);
 			best_fps = fps;
 		}
 		random_steps();
@@ -475,6 +483,6 @@ window.requestAnimFrame = window.requestAnimationFrame ||
 				Your browser does not support WebGL :(
 			</canvas>
 		</div>
-		<div style="font-family:sans-serif;float:right; width:25%;overflow:auto;"><pre id="infowin"></pre></div>
+		<div id="infowin" style="overflow:auto;font-family:sans-serif;float:right;width:25%;height:100%;">PERFORMANCE:<br/></div>
 	</body>
 </html>
