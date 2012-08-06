@@ -36,7 +36,7 @@
 			uniform float epsilon, epsilon_dir;
 			varying vec2 pos;
 			varying vec3 near, far;
-			const float Power = 8.0;
+			const float Power = 7.0;
 			const float BailOut = 2.0;
 			const int Iterations = 5;
 			float DE(vec3 pos) {
@@ -49,7 +49,7 @@
 					// convert to polar coordinates
 					float theta = acos(z.z/r);
 					float phi = atan(z.y,z.x);
-					float r7 = r*r*r*r*r*r*r, r8 = r7*r;
+					float r7 = pow(r,Power-1.0), r8 = r7*r;
 					dr =  r7*Power*dr + 1.0;
 					// scale and rotate the point
 					float zr = r8;
@@ -136,6 +136,7 @@ function start() {
 	window.onerror = function(msg, url, lineno) {
 		alert(url + '(' + lineno + '): ' + msg);
 	};
+	load_file("javascript","ui.js",function() { console.log("loaded ui!"); });
 	canvas = document.getElementById("game-canvas");
 	try {
 		gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
@@ -270,7 +271,7 @@ function render() {
 		step = steps[step_num++];
 		gl.useProgram(step.program);
 		var target = step.distance_tex || canvas,
-			perspective = createPerspective(60.0,canvas.width/canvas.height,0.1,distance+2),
+			perspective = createPerspective(60.0,canvas.offsetWidth/canvas.offsetHeight,0.1,distance+2),
 			inv_mvp = mat4_inverse(mat4_multiply(perspective,modelview));
 		gl.bindFramebuffer(gl.FRAMEBUFFER,step.framebuffer);
 		if(step.distance_tex)
@@ -481,6 +482,35 @@ function mat4_transpose(f) {
 		f[1], f[5], f[9], f[13],
 		f[2], f[6], f[10], f[14],
 		f[3], f[7], f[11], f[15]];
+}
+
+var _loading = [], _loading_wait = null;
+
+function load_file(type,path,callback) {
+	if(_loading_wait) clearTimeout(_loading_wait);
+	_loading_wait = setTimeout(function() {
+		alert("it's taking a long time to load all the files!  Maybe something is wrong?");
+		console.log("awaiting load of:",_loading);
+		},3000);
+	if(type == "javascript") {
+		_loading.push(path);
+		var script = document.createElement('script');
+		script.setAttribute("type","text/javascript");
+		script.setAttribute("src",path);
+		script.async = true;
+		script.onload = function() {
+			if(!script.readyState || script.readyState == "loaded" || script.readyState == "complete") {
+				_loading.splice(_loading.indexOf(path),1);
+				if(!_loading.length) clearTimeout(_loading_wait);
+				if(callback)
+					callback();
+				callback = null;
+			} else
+				console.log("loading state:",type,path,script.readyState);
+		};
+		document.getElementsByTagName("head")[0].appendChild(script);
+	} else
+		console.log("unsupported type",type,path);
 }
 
 window.requestAnimFrame = window.requestAnimationFrame ||
