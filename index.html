@@ -102,9 +102,20 @@ var perf = {
 		this.program.colour = gl.getUniformLocation(this.program,"colour");
 		this.program.vertex = gl.getAttribLocation(this.program,"vertex");
 		this.program.vertexBuf = gl.createBuffer();
+		this.label = null;
 	},
 	draw: function() {
 		// tick
+		if(!this.label && typeof UIWindow !== 'undefined') {
+			this.label = new UIWindow(false, {
+				draw: function(ctx) {
+					if("default" in Fonts) {
+						ctx.drawText(Fonts["default"],[1.0,0.5,0.2,1.0],100,100,""+perf.fps(3)+" fps");
+					}
+				},
+			});
+			this.label.show();
+		}
 		var t = this.now() - this.start, w = 1.0/60;
 		var pts = [t,1,t+w,1,t,0,t+w,1,t,0,t+w,0]; // 2 triangles
 		this.data.set(pts,this.slot);
@@ -121,6 +132,7 @@ var perf = {
 		gl.vertexAttribPointer(this.program.vertex,2,gl.FLOAT,false,0,0);
 		gl.drawArrays(gl.TRIANGLES,0,this.data.length/2);
 		gl.disableVertexAttribArray(this.program.vertex);
+		if(this.label) this.label.dirty();
 	},
 	fps: function(secs) {
 		var count = 0, since = this.now() - this.start - secs;
@@ -136,7 +148,7 @@ function start() {
 	window.onerror = function(msg, url, lineno) {
 		alert(url + '(' + lineno + '): ' + msg);
 	};
-	load_file("javascript","ui.js",function() { console.log("loaded ui!"); });
+	load_file("javascript","ui.js");
 	canvas = document.getElementById("game-canvas");
 	try {
 		gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
@@ -302,6 +314,8 @@ function render() {
 		distance_tex = step.distance_tex;
 		if(step_num == steps.length) {
 			perf.draw();
+			if(typeof draw_UI !== 'undefined')
+				draw_UI(canvas);
 			window.requestAnimFrame(render);
 		} else if(navigator.userAgent.toLowerCase().indexOf('chrome') >= 0)
 			setTimeout(render_step,1); // can't seem to stop repaint bugs in Chrome :(
@@ -492,6 +506,13 @@ function load_file(type,path,callback) {
 		alert("it's taking a long time to load all the files!  Maybe something is wrong?");
 		console.log("awaiting load of:",_loading);
 		},3000);
+	var done = function(arg) {
+		_loading.splice(_loading.indexOf(path),1);
+		if(!_loading.length) clearTimeout(_loading_wait);
+		if(callback)
+			callback(arg);
+		callback = null;
+	};
 	if(type == "javascript") {
 		_loading.push(path);
 		var script = document.createElement('script');
@@ -499,16 +520,33 @@ function load_file(type,path,callback) {
 		script.setAttribute("src",path);
 		script.async = true;
 		script.onload = function() {
-			if(!script.readyState || script.readyState == "loaded" || script.readyState == "complete") {
-				_loading.splice(_loading.indexOf(path),1);
-				if(!_loading.length) clearTimeout(_loading_wait);
-				if(callback)
-					callback();
-				callback = null;
-			} else
+			if(!script.readyState || script.readyState == "loaded" || script.readyState == "complete")
+				done(script);
+			else
 				console.log("loading state:",type,path,script.readyState);
 		};
 		document.getElementsByTagName("head")[0].appendChild(script);
+	} else if(type == "image") {
+		var image = new Image();
+		image.onload = function() { 
+			var texture = gl.createTexture();
+			gl.bindTexture(gl.TEXTURE_2D,texture);
+			gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image);
+			gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+			gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); //_MIPMAP_NEAREST);
+			//gl.generateMipmap(gl.TEXTURE_2D);
+			gl.bindTexture(gl.TEXTURE_2D,null);
+			done(texture);
+		};
+		image.src =path;
+	} else if(type == "xml") {
+		var doc = new XMLHttpRequest();
+		doc.open("GET",path,true);
+		doc.onreadystatechange = function() {
+			if (doc.readyState==4 && (!doc.status || doc.status==200))
+				done(doc.responseXML);
+		};
+		doc.send();
 	} else
 		console.log("unsupported type",type,path);
 }
