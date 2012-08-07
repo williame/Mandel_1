@@ -33,16 +33,13 @@ function Font(xml,texture) {
 		var prev = 0, x = 0, y = 0;
 		for(var ch in text) {
 			ch =text.charCodeAt(ch);
-			if(ch in this.chars) {
-				data = this.chars[ch];
-				x += data.w + data.xofs;
-				y = Math.max(y,data.h + data.yofs);
-			}
+			if(ch in this.chars)
+				x += this.chars[ch].xadv;
 			if(prev in this.kernings)
 				x += this.kernings[prev][ch] || 0;
 			prev = ch;
 		}
-		return [x,y];
+		return [x,this.lineHeight];
 	};
 	this.drawText = function(ctx,colour,x,y,text) {
 		var prev = 0;
@@ -93,25 +90,28 @@ load_font("default","bitstream_vera_sans");
 function Context() {
 	this.width = this.height = 0;
 	this.buffers = [];
+	this.blank = createTexture(1,1,new Uint8Array([255,255,255,255]));
 	this.program = createProgram(
 		"uniform mat4 mvp;\n"+
+		"uniform float z;\n"+
 		"attribute vec2 vertex;\n"+
 		"attribute vec2 texcoord;\n"+
 		"varying vec2 tx;\n"+
 		"void main() {\n"+
 		"	tx = texcoord;\n"+
-		"	gl_Position = mvp * vec4(vertex,-0.5,1.0);\n"+
+		"	gl_Position = mvp * vec4(vertex,z,1.0);\n"+
 		"}",
 		"precision mediump float;\n"+
 		"uniform vec4 colour;\n"+
 		"varying vec2 tx;\n"+
 		"uniform sampler2D texture;\n"+
 		"void main() {\n"+
-		"	vec3 c = texture2D(texture,tx).rgb;\n"+
-		"	gl_FragColor = vec4(c*0.0+colour.rgb,colour.a);\n"+
+		"	vec4 c = texture2D(texture,tx);\n"+
+		"	gl_FragColor = colour * c.a;\n"+
 		"}");
 	this.program.mvp = gl.getUniformLocation(this.program,"mvp");
 	this.program.colour = gl.getUniformLocation(this.program,"colour");
+	this.program.z = gl.getUniformLocation(this.program,"z");
 	this.program.texture = gl.getUniformLocation(this.program,"texture");
 	this.program.vertex = gl.getAttribLocation(this.program,"vertex");
 	this.program.texcoord = gl.getAttribLocation(this.program,"texcoord");
@@ -137,16 +137,16 @@ function Context() {
 		this.set(texture,colour);
 		this.buffers[this.buffers.length-1].data = this.buffers[this.buffers.length-1].data.concat([
 			x1,y1,tx1,ty1, x2,y1,tx2,ty1, x1,y2,tx1,ty2,
-			x2,y1,tx2,ty1, x1,y2,tx1,ty1, x2,y2,tx2,ty2]);
+			x2,y1,tx2,ty1, x1,y2,tx1,ty2, x2,y2,tx2,ty2]);
 	};
 	this.fillRect = function(colour,x1,y1,x2,y2) {
-		this.drawRect(null,colour,x1,y1,x2,y2);
+		this.drawRect(this.blank,colour,x1,y1,x2,y2);
 	};
-	this.draw = function() {
-		gl.viewport(0,0,this.width,this.height);
+	this.draw = function(mvp) {
 		gl.useProgram(this.program);
-		gl.uniformMatrix4fv(this.program.mvp,false,new Float32Array(createOrtho2D(0,this.width,0,this.height)));
+		gl.uniformMatrix4fv(this.program.mvp,false,mvp);
 		gl.uniform1i(this.program.texture,0);
+		gl.uniform1i(this.program.z,0.6);
 		gl.activeTexture(gl.TEXTURE0);
 		for(var buffer in this.buffers) {
 			buffer = this.buffers[buffer];
@@ -163,7 +163,7 @@ function Context() {
 			gl.vertexAttribPointer(this.program.vertex,2,gl.FLOAT,false,16,0);
 			gl.enableVertexAttribArray(this.program.texcoord);
 			gl.vertexAttribPointer(this.program.texcoord,2,gl.FLOAT,false,16,8);
-			gl.drawArrays(gl.TRIANGLES,0,buffer.data.length/2);
+			gl.drawArrays(gl.TRIANGLES,0,buffer.data.length/4);
 		}
 		gl.disableVertexAttribArray(this.program.vertex);
 		gl.disableVertexAttribArray(this.program.texcoord);
@@ -194,6 +194,7 @@ function UIWindow(modal,tree) {
 			this.ctx.width = canvas.offsetWidth;
 			this.ctx.height = canvas.offsetHeight;
 			this.is_dirty = true;
+			this.mvp = new Float32Array(createOrtho2D(0,this.ctx.width,this.ctx.height,0));
 		}
 		if(this.is_dirty) {
 			this.ctx.clear();
@@ -208,7 +209,7 @@ function UIWindow(modal,tree) {
 			draw(tree,this.ctx);
 			this.is_dirty = false;
 		}
-		this.ctx.draw();
+		this.ctx.draw(this.mvp);
 	};
 	this.hide = function() {
 		var idx = Windows.indexOf(this);

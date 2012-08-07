@@ -110,7 +110,12 @@ var perf = {
 			this.label = new UIWindow(false, {
 				draw: function(ctx) {
 					if("default" in Fonts) {
-						ctx.drawText(Fonts["default"],[1.0,0.5,0.2,1.0],100,100,""+perf.fps(3)+" fps");
+						font = Fonts["default"];
+						var fps = ""+perf.fps(3).toFixed(2)+" fps",
+							x = 10, y = 10,
+							sz = font.measureText(fps);
+						ctx.fillRect([1,1,1,1],x,y,x+sz[0],y+sz[1]);
+						ctx.drawText(font,[1,0,0,1],x,y,fps);
 					}
 				},
 			});
@@ -158,8 +163,10 @@ function start() {
 		return;
 	}
 	gl.activeTexture(gl.TEXTURE0);
-	gl.clearColor(0,0,0,1);
+	gl.clearColor(0,0,0,0);
 	gl.disable(gl.DEPTH_TEST);
+	gl.enable(gl.BLEND);
+	gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
 	gl.disable(gl.CULL_FACE);
   	window.onresize = function() {
 		// setting its OpenGL canvas size to largest power-of-2 smaller than the canvas screen space
@@ -194,7 +201,7 @@ function build_steps(FinalMaxRaySteps) {
 		steps.push({
 			program: createProgram(vs,fs.replace("$MaxRaySteps$",cfg.MaxRaySteps)),
 			framebuffer: gl.createFramebuffer(),
-			distance_tex: createFramebufferTexture(cfg.Distance_W,cfg.Distance_H),
+			distance_tex: createTexture(cfg.Distance_W,cfg.Distance_H),
 		});
 	}
 	steps.push({
@@ -356,10 +363,10 @@ function createProgram(vstr,fstr) {
 	return program;
 }
 
-function createFramebufferTexture(width,height) {
+function createTexture(width,height,data) {
 	var tex = gl.createTexture();
 	gl.bindTexture(gl.TEXTURE_2D, tex);
-	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data || null);
 	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -410,7 +417,7 @@ function createLookAt(eye,centre,up) {
         	-(x0*eye[0] + x1*eye[1] + x2*eye[2]), -(y0*eye[0] + y1*eye[1] + y2*eye[2]), -(z0*eye[0] + z1*eye[1] + z2*eye[2]), 1];
 }
 
-function createOrtho2D(left,right,top,bottom) {
+function createOrtho2D(left,right,bottom,top) {
 	var near = -1, far = 1, rl = right-left, tb = top-bottom, fn = far-near;
 	return [2/rl,0,0,0,
 		0,2/tb,0,0,
@@ -509,6 +516,7 @@ function load_file(type,path,callback) {
 		console.log("awaiting load of:",_loading);
 		},3000);
 	var done = function(arg) {
+		console.log("loaded",type,path);
 		_loading.splice(_loading.indexOf(path),1);
 		if(!_loading.length) clearTimeout(_loading_wait);
 		if(callback)
