@@ -147,7 +147,9 @@ function start() {
 	}
 	gl.activeTexture(gl.TEXTURE0);
 	gl.clearColor(0,0,0,1);
-	window.onresize = function() {
+	gl.disable(gl.DEPTH_TEST);
+	gl.disable(gl.CULL_FACE);
+  	window.onresize = function() {
 		// setting its OpenGL canvas size to largest power-of-2 smaller than the canvas screen space
 		for(canvas.width = 2; canvas.width*2 <= canvas.offsetWidth; canvas.width *= 2);
 		for(canvas.height = 2; canvas.height*2 <= canvas.offsetHeight; canvas.height *= 2);
