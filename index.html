@@ -112,10 +112,11 @@ var perf = {
 					if("default" in Fonts) {
 						font = Fonts["default"];
 						var fps = ""+perf.fps(3).toFixed(2)+" fps",
+							m = 6,
 							x = 10, y = 10,
 							sz = font.measureText(fps);
-						ctx.fillRect([1,1,1,1],x,y,x+sz[0],y+sz[1]);
-						ctx.drawText(font,[1,0,0,1],x,y,fps);
+						ctx.fillRoundedRect([0,1,0.5,1],m,x+m,y+m,x+m+sz[0],y+m+sz[1]);
+						ctx.drawText(font,[1,0,0,1],x+m,y+m,fps);
 					}
 				},
 			});

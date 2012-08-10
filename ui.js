@@ -91,6 +91,7 @@ function Context() {
 	this.width = this.height = 0;
 	this.buffers = [];
 	this.blank = createTexture(1,1,new Uint8Array([255,255,255,255]));
+	this.corners = [];
 	this.program = createProgram(
 		"uniform mat4 mvp;\n"+
 		"uniform float z;\n"+
@@ -140,7 +141,43 @@ function Context() {
 			x2,y1,tx2,ty1, x1,y2,tx1,ty2, x2,y2,tx2,ty2]);
 	};
 	this.fillRect = function(colour,x1,y1,x2,y2) {
-		this.drawRect(this.blank,colour,x1,y1,x2,y2);
+		this.drawRect(this.blank,colour,x1,y1,x2,y2,0,0,1,1);
+	};
+	this.fillRoundedRect = function(colour,margin,x1,y1,x2,y2) {
+		var makeCorners = function(r) {
+			var pts = [],
+				x = r, y = 0,
+				theta = 2 * Math.PI / (r*4),
+				cos = Math.cos(theta), sin = Math.sin(theta);
+			for(var i=0; i<r; i++) {
+				var px = x, py = y;
+				x = cos * x - sin * y;
+				y = sin * px + cos * y;
+				pts.push([px,py,x,y]);
+			}
+			return pts;
+		};
+		var corner = this.corners[margin] = this.corners[margin] || makeCorners(margin),
+			pts = [], p = 0,
+			addPoint = function(pt,x,xdir,y,ydir) {
+				pts[p++] = x + xdir*pt[0]; pts[p++] = y + ydir*pt[1];
+				pts[p++] = 0; pts[p++] = 0;
+				pts[p++] = x + xdir*pt[2]; pts[p++] = y + ydir*pt[3];
+				pts[p++] = 1; pts[p++] = 0;
+				pts[p++] = x; pts[p++] = y;
+				pts[p++] = 1; pts[p++] = 1;
+			};
+		for(var pt in corner) {
+			pt = corner[pt];
+			addPoint(pt,x1,-1,y1,-1);
+			addPoint(pt,x2,+1,y1,-1);
+			addPoint(pt,x1,-1,y2,+1);
+			addPoint(pt,x2,+1,y2,+1);
+		}
+		this.drawRect(this.blank,colour,x1,y1-margin,x2,y2+margin,0,0,1,1); // sets up right texture and colour buffer
+		this.drawRect(this.blank,colour,x1-margin,y1,x1,y2,0,0,1,1);
+		this.drawRect(this.blank,colour,x2,y1,x2+margin,y2,0,0,1,1);
+		this.buffers[this.buffers.length-1].data = this.buffers[this.buffers.length-1].data.concat(pts);
 	};
 	this.draw = function(mvp) {
 		gl.useProgram(this.program);
